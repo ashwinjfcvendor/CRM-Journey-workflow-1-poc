@@ -5,14 +5,20 @@
 
 ```bash
 python3 -m venv env
+```
 
 
 ```bash
 source env/bin/activate
+```
 
+```bash
+pip install -r requirements.txt 
+```
 
 ```bash
 docker compose up -d
+```
 
 
 wait for 1 mins for all the containers to come up 
@@ -20,6 +26,7 @@ wait for 1 mins for all the containers to come up
 
 ```bash
 python3 test_worker2.py
+```
 
 
-check localhost:8080 to se the status of workflow
+### Check localhost:8080 to se the status of workflow
