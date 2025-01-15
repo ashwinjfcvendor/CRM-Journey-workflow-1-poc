@@ -29,4 +29,4 @@ python3 test_worker2.py
 ```
 
 
-### Check localhost:8080 to se the status of workflow
+### Check localhost:8080 to see the status of workflow
