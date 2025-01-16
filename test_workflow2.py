@@ -3,22 +3,25 @@ from datetime import timedelta
 from temporalio import workflow, activity
 from temporalio.worker import Worker
 from temporalio.client import Client
+import time
+
+async def query_ch() -> list:
+    print("Querying CH")
+    return [
+        {"session_id": "abc", "first_session_time": "2025-01-15T10:00:00", "is_eligible": "True", "cc1_status": "false"},
+        {"session_id": "def", "first_session_time": "2025-01-15T10:05:00", "is_eligible": "True", "cc1_status": "true"},
+        {"session_id": "arun", "first_session_time": "2025-01-15T10:05:00", "is_eligible": "True", "cc1_status": "true"},
+    ]
 
 # Activity to simulate querying ClickHouse
 @activity.defn
 async def query_clickhouse() -> list:
-    """Simulate a query to ClickHouse returning session data."""
     print("Querying ClickHouse for session data")
-    # Simulated response: list of dicts with session data
-    return [
-        {"session_id": "abc", "first_session_time": "2025-01-15T10:00:00", "is_eligible": "True", "cc1_status": "false"},
-        {"session_id": "def", "first_session_time": "2025-01-15T10:05:00", "is_eligible": "True", "cc1_status": "true"},
-    ]
+    return await query_ch()
 
 # Activity to calculate time difference between session start and current time
 @activity.defn
 async def calculate_time_difference(session: dict) -> str:
-    """Calculate the time difference between the current time and the first session time."""
     from datetime import datetime
     
     first_session_time = datetime.strptime(session["first_session_time"], "%Y-%m-%dT%H:%M:%S")
@@ -29,9 +32,11 @@ async def calculate_time_difference(session: dict) -> str:
 # Activity to print the cc1_status(contenct card 1) if it is "true"
 @activity.defn
 async def print_cc1_status(session: dict) -> None:
-    """Print cc1_status if it is 'true'."""
     if session["cc1_status"] == "true":
         print(f"Session {session['session_id']} has cc1_status: {session['cc1_status']}")
+    else:
+        await asyncio.sleep(60)  # Non-blocking delay
+        print(await query_ch())
 
 # Workflow to handle the session data
 @workflow.defn
@@ -44,15 +49,18 @@ class EventDrivenWorkflow:
             schedule_to_close_timeout=timedelta(seconds=10),
         )
         
-        # Start a separate workflow for each session
-        for session in session_data:
-            print(f"Starting session workflow for session_id: {session['session_id']}")
-            await workflow.execute_child_workflow(
-                SessionWorkflow.run,
-                session,
-                id=f"session-workflow-{session['session_id']}",
-                task_queue="event-driven-task-queue",
-            )
+        # Start all session workflows in parallel
+        await asyncio.gather(
+            *[
+                workflow.execute_child_workflow(
+                    SessionWorkflow.run,
+                    session,
+                    id=f"session-workflow-{session['session_id']}",
+                    task_queue="event-driven-task-queue",
+                )
+                for session in session_data
+            ]
+        )
 
 # Workflow to process a single session
 @workflow.defn
@@ -71,7 +79,7 @@ class SessionWorkflow:
         await workflow.execute_activity(
             print_cc1_status,
             session,
-            schedule_to_close_timeout=timedelta(seconds=10),
+            schedule_to_close_timeout=timedelta(seconds=100),
         )
 
 async def main():
