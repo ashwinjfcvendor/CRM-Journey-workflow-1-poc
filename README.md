@@ -25,7 +25,7 @@ wait for 1 mins for all the containers to come up
 
 
 ```bash
-python3 test_worker2.py
+python3 test_worker4.py
 ```
 
 
