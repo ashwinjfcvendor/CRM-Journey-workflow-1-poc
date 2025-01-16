@@ -35,7 +35,7 @@ async def print_cc1_status(session: dict) -> None:
     if session["cc1_status"] == "true":
         print(f"Session {session['session_id']} has cc1_status: {session['cc1_status']}")
     else:
-        await asyncio.sleep(60)  # Non-blocking delay
+        await asyncio.sleep(20)  # Non-blocking delay
         print(await query_ch())
 
 # Workflow to handle the session data
@@ -79,7 +79,7 @@ class SessionWorkflow:
         await workflow.execute_activity(
             print_cc1_status,
             session,
-            schedule_to_close_timeout=timedelta(seconds=100),
+            schedule_to_close_timeout=timedelta(seconds=30),
         )
 
 async def main():
