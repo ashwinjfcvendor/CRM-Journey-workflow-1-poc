@@ -1,6 +1,7 @@
 # Steps to run Clinkhouse Sink connector 
 
 ## 1. Run clickhouse instance and Connce worker instance
+* configure 'CONNECT_BOOTSTRAP_SERVERS', 'CONNECT_SASL_JAAS_CONFIG' in docker compose file
 
 ```bash
 docker compose build
