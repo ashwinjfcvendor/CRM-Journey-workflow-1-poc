@@ -1,0 +1,44 @@
+journey_workflow:
+  send_push_notification_2:
+    - "Not signed up"
+    - "No activity for 3 days after first session"
+    - "Session count in (Now - First session >= 3 days) = 1 then produce to Kafka"
+    - "Can be executed on a daily basis"
+  send_content_card_1a:
+    - "Not signed up"
+    - "More than 1 session within 5 days after first session"
+    - "Session count in (Now - First session <= 5 days) > 1 then produce to Kafka"
+    - "Need to execute periodically to check if there has been more than one session"
+  send_push_notification_3:
+    - "Not signed up"
+    - "Now - First session >= 5 days then produce to Kafka"
+    - "Can be executed on a daily basis"
+  exit_after_one_month:
+    - "Not signed up"
+    - "push notification 3 has been sent"
+    - "Timer for One month after notification 3 has been sent"
+    - "Not applicable in case the user signs up"
+    - "Exit workflow and reentry after 6 months if not signed up"
+  send_email_4a:
+    - "Signed up"
+    - "Not App Logged in"
+    - "Now - First sign up time >= 7 days then produce to Kafka"
+  send_email_4b:
+    - "Signed up"
+    - "Not App Logged in"
+    - "Now - Email 4a time >= 5 days then produce to Kafka"
+    - "Did not open Email 4a"
+  send_email_5:
+    - "Signed up"
+    - "Not App Logged in"
+    - "Now - Email 4a time >= 5 days then produce to Kafka"
+    - "Opened Email 4a"
+  exit_reentry_after_6_months:
+    - "Signed up"
+    - "Not App Logged in"
+    - "Now - Email 4b or 5 time >= x days then exit workflow"
+    - "Reentry after 6 months if not signed up and not app logged in"
+  exit_no_reentry:
+    - "Signed up"
+    - "App logged in"
+    - "Check periodically - Likely daily once"
