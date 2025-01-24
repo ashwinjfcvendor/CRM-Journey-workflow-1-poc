@@ -4,9 +4,9 @@ import time
 import argparse
 
 
-def read_config():
+def read_config(path):
   config = {}
-  with open("client.properties") as fh:
+  with open(path, "r") as fh:
     for line in fh:
       line = line.strip()
       if len(line) != 0 and line[0] != "#":
@@ -43,8 +43,8 @@ def produce(topic, config):
                       "client_id": client_id
                   }
               }
-        key = "key"
-        value = "value"
+        # key = "key"
+        # value = "value"
         producer.produce(topic, value=json.dumps(payload))
         print(f"Produced message to topic {topic} value = {payload}")
 
@@ -56,12 +56,14 @@ def produce(topic, config):
 
 
 def main():
-  config = read_config()
   parser = argparse.ArgumentParser()
   parser.add_argument("--topic", help="Name of topic to produce to",type=str)
+  parser.add_argument("--config", help="Path of the configuration file",type=str)
   args = parser.parse_args()
   topic = args.topic
+  config_path = args.config
   print(topic)
+  config = read_config(config_path)
 
   produce(topic,config)
  
