@@ -54,7 +54,7 @@ def send_kafka_event(topic: str, event_data: dict):
     producer.produce(topic, key=str(event_data['client_id']), value=str(event_data))
     producer.flush()
 
-@activity.defn(name="get user state")
+@activity.defn(name="get_user_state")
 def get_user_state(client_id: str):
     cursor = postgres_con.cursor(cursor_factory=DictCursor)
     query = "SELECT * FROM user_state WHERE client_id = %s;"
@@ -75,9 +75,16 @@ def get_user_state(client_id: str):
                 "sent_email_5": row.get("sent_email_5")
             }
             return user_state
-        else:
+    else:
             return None
 
+@activity.defn(name="update_user_state")
+def update_user_state(client_id:str, event:str):
+    cursor = postgres_con.cursor(cursor_factory=DictCursor)
+    query = f"UPDATE user_state SET {event} = %s WHERE client_id = %s;"
+    cursor.execute(query, (True, client_id))
+    return print(f"Updated user_state for {event}")
+    
 
 # Workflow to handle the session data
 @workflow.defn(name="customer_sign_up_workflow")
@@ -119,8 +126,14 @@ class CustomerSignUpWorkflow:
                 # Send push notification 2 event to Kafka
                 await workflow.execute_activity(
                     send_kafka_event,
-                    "send_notification_event",
-                    {"client_id": client_id, "event": "send_notification"},
+                    "send_push_notification_2",
+                    {"client_id": client_id, "event": "sent_pushnotification_2"},
+                    start_to_close_timeout=timedelta(seconds=5),
+                )
+                await workflow.execute_activity(
+                    update_user_state,
+                    client_id,
+                    "sent_push_notification_2",
                     start_to_close_timeout=timedelta(seconds=5),
                 )
 
@@ -156,8 +169,14 @@ class CustomerSignUpWorkflow:
                 # Send notification event to Kafka
                 await workflow.execute_activity(
                     send_kafka_event,
-                    "send_content_card_event",
-                    {"client_id": client_id, "event": "send_content_card"},
+                    "sent_push_notification_3",
+                    {"client_id": client_id, "event": "sent_push_notification_3"},
+                    start_to_close_timeout=timedelta(seconds=5),
+                )
+                await workflow.execute_activity(
+                    update_user_state,
+                    client_id,
+                    "sent_push_notification_3",
                     start_to_close_timeout=timedelta(seconds=5),
                 )
 
@@ -165,7 +184,7 @@ class CustomerSignUpWorkflow:
 class ShowContentCardWorkflow:
     pass
 
-@workflw.def(name="customer_login_workflow")
+@workflow.defn(name="customer_login_workflow")
 class CustomerLoginWorkflow:
     @workflow.run
     async def run(self, client_id: str, signedup_time: datetime):
@@ -195,11 +214,17 @@ class CustomerLoginWorkflow:
                     {"client_id": client_id, "event": "send_email_4a"},
                     start_to_close_timeout=timedelta(seconds=5),
                 )
+                await workflow.execute_activity(
+                    update_user_state,
+                    client_id,
+                    "sent_email_4a",
+                    start_to_close_timeout=timedelta(seconds=5),
+                )
 
         ## Wait for 5 days after sending email_4a
         five_days_after_email_4a_sent = seven_days_from_signup_time + timedelta(days=5)
-        seconds_to_five_days_after_email4a = round((five_days_after_email_4a_sent)- datetime.now().total_seconds())
-        await.asyncio.sleep(seconds_to_five_days_after_email4a)
+        seconds_to_five_days_after_email4a = round((five_days_after_email_4a_sent- datetime.now()).total_seconds())
+        await asyncio.sleep(seconds_to_five_days_after_email4a)
 
         user_state = await workflow.execute_activity(
             get_user_state,
@@ -216,6 +241,12 @@ class CustomerLoginWorkflow:
                     {"client_id": client_id, "event": "send_email_5"},
                     start_to_close_timeout=timedelta(seconds=5),
                 )
+            await workflow.execute_activity(
+                    update_user_state,
+                    client_id,
+                    "sent_email_5",
+                    start_to_close_timeout=timedelta(seconds=5),
+                )
 
         elif not user_state["is_app_logged_in"] and user_state["sent_email_4a"] and not user_state["click_email_4a"]:
             workflow.logger.info("Customer has not not app logged in for 5 days after email 4a has been sent and also not opened email 4a. Sending email 4b")
@@ -223,7 +254,13 @@ class CustomerLoginWorkflow:
             await workflow.execute_activity(
                     send_kafka_event,
                     "send_email_4b",
-                    {"client_id": client_id, "event": "send_email_b"},
+                    {"client_id": client_id, "event": "send_email_4b"},
+                    start_to_close_timeout=timedelta(seconds=5),
+                )
+            await workflow.execute_activity(
+                    update_user_state,
+                    client_id,
+                    "sent_email_4b",
                     start_to_close_timeout=timedelta(seconds=5),
                 )
 
@@ -237,8 +274,8 @@ async def main():
     worker = Worker(
         client,
         task_queue="event-driven-task-queue",
-        workflows=[CustomerSignUpWorkflow],
-        activities=[get_session_count, send_kafka_event],
+        workflows=[CustomerSignUpWorkflow, CustomerLoginWorkflow],
+        activities=[get_session_count, send_kafka_event, get_user_state, update_user_state],
     )
 
     # Start worker in the background
