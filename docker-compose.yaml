@@ -25,8 +25,8 @@ services:
     image: postgres:${POSTGRESQL_VERSION}
     networks:
       - temporal-network
-    expose:
-      - 5432
+    ports:
+      - 5432:5432
     volumes:
       - /var/lib/postgresql/data
   temporal:

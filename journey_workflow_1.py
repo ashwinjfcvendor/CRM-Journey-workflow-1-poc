@@ -8,6 +8,17 @@ import asyncio
 from confluent_kafka import Producer
 import clickhouse_connect
 
+import psycopg2
+from psycopg2.extras import DictCursor
+
+postgres_con = psycopg2.connect(
+    database="userstate",
+    user="temporal",
+    password ="temporal",
+    host="localhost",
+    port=5432
+    )
+
 
 # Kafka producer configuration
 kafka_config = {
@@ -43,28 +54,52 @@ def send_kafka_event(topic: str, event_data: dict):
     producer.produce(topic, key=str(event_data['client_id']), value=str(event_data))
     producer.flush()
 
+@activity.defn(name="get user state")
+def get_user_state(client_id: str):
+    cursor = postgres_con.cursor(cursor_factory=DictCursor)
+    query = "SELECT * FROM user_state WHERE client_id = %s;"
+    cursor.execute(query,(client_id,))
+    row = cursor.fetchone()
+    if row:
+            # Map the database row to the desired user_state format
+            user_state = {
+                "is_signed_up": row.get("is_signed_up"),
+                "is_usage_app": row.get("is_usage_app"),
+                "is_app_logged_in": row.get("is_app_logged_in"),
+                "sent_push_notification_2": row.get("sent_push_notification_2"),
+                "sent_content_card_1a": row.get("sent_content_card_1a"),
+                "sent_push_notification_3": row.get("sent_push_notification_3"),
+                "sent_email_4a": row.get("sent_email_4a"),
+                "click_email_4a": row.get("click_email_4a"),
+                "sent_email_4b": row.get("sent_email_4b"),
+                "sent_email_5": row.get("sent_email_5")
+            }
+            return user_state
+        else:
+            return None
+
 
 # Workflow to handle the session data
 @workflow.defn(name="customer_sign_up_workflow")
 class CustomerSignUpWorkflow:
     @workflow.run
-    async def run(self, client_id: str, first_session_time: datetime):
-        user_state = {
-            "is_signed_up": False,
-            "is_usage_app": False,
-            "is_app_logged_in": False,
-            "sent_push_notification_2": False,
-            "sent_content_card_1a": False,
-            "sent_push_notification_3": False,
-            "sent_email_4a": False,
-            "sent_email_4b": False,
-            "sent_email_5": False
-        }
+    async def run(self, client_id: str, first_session_time: datetime, ):
+        user_state = await workflow.execute_activity(
+            get_user_state,
+            client_id,
+            schedule_to_close_timeout=timedelta(seconds=10),
+        )
 
         ## Wait for 3 days to check if no sessions have occurred
         three_days_from_first_session_time = first_session_time + timedelta(days=3)
         seconds_to_three_days = round((three_days_from_first_session_time - datetime.now()).total_seconds())
         await asyncio.sleep(seconds_to_three_days)
+
+        user_state = await workflow.execute_activity(
+            get_user_state,
+            client_id,
+            schedule_to_close_timeout=timedelta(seconds=10),
+        )
         
         if user_state["is_usage_app"]:
             ## Query Clickhouse to get session count for user
@@ -98,6 +133,12 @@ class CustomerSignUpWorkflow:
         seconds_to_five_days = round((five_days_from_first_session_time - datetime.now()).total_seconds())
         await asyncio.sleep(seconds_to_five_days)
 
+        user_state = await workflow.execute_activity(
+            get_user_state,
+            client_id,
+            schedule_to_close_timeout=timedelta(seconds=10),
+        )
+
         if user_state["is_usage_app"] and not user_state["is_app_logged_in"]:
             # sessions_last_5_days = await workflow.execute_activity(
             #     get_session_count,
@@ -123,6 +164,69 @@ class CustomerSignUpWorkflow:
 @workflow.defn(name="show_content_card")
 class ShowContentCardWorkflow:
     pass
+
+@workflw.def(name="customer_login_workflow")
+class CustomerLoginWorkflow:
+    @workflow.run
+    async def run(self, client_id: str, signedup_time: datetime):
+        user_state = await workflow.execute_activity(
+            get_user_state,
+            client_id,
+            schedule_to_close_timeout=timedelta(seconds=10),
+        )
+
+        ## wait for 7 days after sighup
+        seven_days_from_signup_time = signedup_time + timedelta(days=3)
+        seconds_to_seven_days = round((seven_days_from_signup_time - datetime.now()).total_seconds())
+        await asyncio.sleep(seconds_to_seven_days)
+
+        user_state = await workflow.execute_activity(
+            get_user_state,
+            client_id,
+            schedule_to_close_timeout=timedelta(seconds=10),
+        )
+
+        if not user_state["is_app_logged_in"]:
+            workflow.logger.info("Customer has not app logged in the last 7 days. Sending email_4a")
+            # send email_4a event to kafka
+            await workflow.execute_activity(
+                    send_kafka_event,
+                    "send_email_4a",
+                    {"client_id": client_id, "event": "send_email_4a"},
+                    start_to_close_timeout=timedelta(seconds=5),
+                )
+
+        ## Wait for 5 days after sending email_4a
+        five_days_after_email_4a_sent = seven_days_from_signup_time + timedelta(days=5)
+        seconds_to_five_days_after_email4a = round((five_days_after_email_4a_sent)- datetime.now().total_seconds())
+        await.asyncio.sleep(seconds_to_five_days_after_email4a)
+
+        user_state = await workflow.execute_activity(
+            get_user_state,
+            client_id,
+            schedule_to_close_timeout=timedelta(seconds=10),
+        )
+
+        if not user_state["is_app_logged_in"] and user_state["sent_email_4a"] and user_state["click_email_4a"]: 
+            workflow.logger.info("Customer has not not app logged in for 5 days after email 4a has been sent but has opened email 4a. Sending email 5 coupon incentive")
+            # send email_5 event to kafka
+            await workflow.execute_activity(
+                    send_kafka_event,
+                    "send_email_5",
+                    {"client_id": client_id, "event": "send_email_5"},
+                    start_to_close_timeout=timedelta(seconds=5),
+                )
+
+        elif not user_state["is_app_logged_in"] and user_state["sent_email_4a"] and not user_state["click_email_4a"]:
+            workflow.logger.info("Customer has not not app logged in for 5 days after email 4a has been sent and also not opened email 4a. Sending email 4b")
+            # send emai_4b to kafka
+            await workflow.execute_activity(
+                    send_kafka_event,
+                    "send_email_4b",
+                    {"client_id": client_id, "event": "send_email_b"},
+                    start_to_close_timeout=timedelta(seconds=5),
+                )
+
 
 
 async def main():
