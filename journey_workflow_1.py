@@ -48,7 +48,9 @@ def check_and_insert_postgres(client_ids):
         # Bulk insert all new client_ids at once
         insert_query = f"""
             INSERT INTO {table_name} (
-                client_id, 
+                client_id,
+                triggered_sign_up_workflow,
+                triggered_login_workflow,
                 is_signed_up, 
                 is_usage_app, 
                 is_app_logged_in, 
@@ -64,7 +66,7 @@ def check_and_insert_postgres(client_ids):
         """
 
         values = [
-            (cid, False, True, False, False, False, False, False, False, False, False, False)
+            (cid, False, False, False, True, False, False, False, False, False, False, False, False, False)
             for cid in new_client_ids
         ]
         
@@ -189,12 +191,12 @@ class CustomerSignUpWorkflow:
             schedule_to_close_timeout=timedelta(seconds=10),
         )
 
-        # await workflow.execute_activity(
-        #             update_user_state,
-        #             client_id,
-        #             "is_usage_app",
-        #             start_to_close_timeout=timedelta(seconds=5),
-        #         )
+        await workflow.execute_activity(
+                    update_user_state,
+                    client_id,
+                    "triggered_sign_up_workflow",
+                    start_to_close_timeout=timedelta(seconds=5),
+                )
 
         ## Wait for 3 days to check if no sessions have occurred
         three_days_from_first_session_time = first_session_time + timedelta(days=3)
@@ -292,6 +294,13 @@ class CustomerLoginWorkflow:
             client_id,
             schedule_to_close_timeout=timedelta(seconds=10),
         )
+
+        await workflow.execute_activity(
+                    update_user_state,
+                    client_id,
+                    "triggered_login_workflow",
+                    start_to_close_timeout=timedelta(seconds=5),
+                )
 
         ## wait for 7 days after sighup
         seven_days_from_signup_time = signedup_time + timedelta(days=3)
