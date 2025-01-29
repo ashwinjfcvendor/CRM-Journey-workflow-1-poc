@@ -29,6 +29,75 @@ producer = Producer(kafka_config)
 # ClickHouse connection
 clickhouse_client = clickhouse_connect.get_client(host='localhost', port=8123, username='default', password='')
 
+def check_and_insert_postgres(client_ids):
+    cursor = postgres_con.cursor()
+    table_name = "user_state"
+
+    if not client_ids:
+        return  # No clients to insert
+
+    # Fetch existing client_ids in one query
+    query = f"SELECT client_id FROM {table_name} WHERE client_id IN %s"
+    cursor.execute(query, (tuple(client_ids),))
+    existing_ids = {row[0] for row in cursor.fetchall()}  # Convert to a set for fast lookup
+
+    # Filter out existing client_ids
+    new_client_ids = [cid for cid in client_ids if cid not in existing_ids]
+
+    if new_client_ids:
+        # Bulk insert all new client_ids at once
+        insert_query = f"""
+            INSERT INTO {table_name} (
+                client_id, 
+                is_signed_up, 
+                is_usage_app, 
+                is_app_logged_in, 
+                sent_push_notification_2, 
+                sent_content_card_1a, 
+                sent_push_notification_3, 
+                sent_email_4a, 
+                click_email_4a, 
+                sent_email_4b, 
+                sent_email_5,
+                is_logged_in
+            ) VALUES %s
+        """
+
+        values = [
+            (cid, False, True, False, False, False, False, False, False, False, False, False)
+            for cid in new_client_ids
+        ]
+        
+        psycopg2.extras.execute_values(cursor, insert_query, values)  # Bulk insert
+        print(f"Inserted {len(new_client_ids)} new entries.")
+
+
+def get_first_session_time(client_id:str):
+    query = """
+        SELECT MIN(toInt64(session_id)) AS lowest_session_id
+        FROM user_engagement_events_transformed
+        WHERE client_id = %s
+    """
+    result = clickhouse_client.query(query, (client_id,))
+    data = result.result_rows
+    if data and data[0][0] is not None:
+        return data[0][0]
+
+def sign_up_time(client_id:str):
+    cursor = postgres_con.cursor()
+    
+    query = """
+        SELECT signup_time 
+        FROM user_state 
+        WHERE client_id = %s
+    """
+
+    cursor.execute(query, (client_id,))
+    data = cursor.fetchone()
+
+    if data:
+        return data[0]  # Return signup time
+
 # Define Clickhouse activity for querying the number of sessions
 @activity.defn(name="get_session_count")
 def get_session_count(client_id: str, start_time: datetime, end_time: datetime) -> int:
@@ -72,7 +141,10 @@ def get_user_state(client_id: str):
                 "sent_email_4a": row.get("sent_email_4a"),
                 "click_email_4a": row.get("click_email_4a"),
                 "sent_email_4b": row.get("sent_email_4b"),
-                "sent_email_5": row.get("sent_email_5")
+                "sent_email_5": row.get("sent_email_5"),
+                "is_logged_in": row.get("is_logged_in"),
+                "signup_time": row.get("signup_time"),
+                "login_time": row.get("login_time")
             }
             return user_state
     else:
@@ -84,6 +156,26 @@ def update_user_state(client_id:str, event:str):
     query = f"UPDATE user_state SET {event} = %s WHERE client_id = %s;"
     cursor.execute(query, (True, client_id))
     return print(f"Updated user_state for {event}")
+
+@activity.defn(name="query_clickhouse")
+def query_clickhouse():
+    query = """
+        SELECT DISTINCT client_id
+        FROM user_engagement_events_transformed
+        WHERE consumed_at >= now() - INTERVAL 10 MINUTE
+    """ # between trigger time - 10 mins
+
+    result = clickhouse_client.query(query)
+    data = result.result_rows
+
+    if data:
+        client_ids = [row[0] for row in data]
+
+        # Check and insert into PostgreSQL
+        check_and_insert_postgres(client_ids)        
+        return client_ids
+    
+    return []
     
 
 # Workflow to handle the session data
@@ -96,6 +188,13 @@ class CustomerSignUpWorkflow:
             client_id,
             schedule_to_close_timeout=timedelta(seconds=10),
         )
+
+        # await workflow.execute_activity(
+        #             update_user_state,
+        #             client_id,
+        #             "is_usage_app",
+        #             start_to_close_timeout=timedelta(seconds=5),
+        #         )
 
         ## Wait for 3 days to check if no sessions have occurred
         three_days_from_first_session_time = first_session_time + timedelta(days=3)
@@ -264,6 +363,39 @@ class CustomerLoginWorkflow:
                     start_to_close_timeout=timedelta(seconds=5),
                 )
 
+@workflow.defn(name="main_clickhouse_workflow")
+class MainClickhouseWorkflow:
+    @workflow.run
+    async def run(self):
+        # Query Clickhouse for new client IDs
+        client_ids = await workflow.execute_activity(
+            query_clickhouse,
+            schedule_to_close_timeout=timedelta(seconds=30),
+        )
+
+        # Trigger workflows for each client ID
+        for client_id in client_ids:
+            try:
+                # Start or continue the Customer Sign-Up workflow
+                await workflow.start_child_workflow(
+                    CustomerSignUpWorkflow.run,
+                    client_id=client_id,
+                    first_session_time=get_first_session_time(client_id),
+                    id=f"customer-sign-up-{client_id}",
+                    task_queue="event-driven-task-queue",
+                )
+
+                # Start or continue the Customer Login workflow
+                await workflow.start_child_workflow(
+                    CustomerLoginWorkflow.run,
+                    client_id=client_id,
+                    sign_up_time=sign_up_time(client_id),
+                    id=f"customer-login-{client_id}",
+                    task_queue="event-driven-task-queue",
+                )
+            except workflow.ChildWorkflowAlreadyRunningError:
+                workflow.logger.info(f"Workflow for client {client_id} is already running.")
+
 
 
 async def main():
@@ -274,8 +406,8 @@ async def main():
     worker = Worker(
         client,
         task_queue="event-driven-task-queue",
-        workflows=[CustomerSignUpWorkflow, CustomerLoginWorkflow],
-        activities=[get_session_count, send_kafka_event, get_user_state, update_user_state],
+        workflows=[MainClickhouseWorkflow, CustomerSignUpWorkflow, CustomerLoginWorkflow],
+        activities=[query_clickhouse, get_session_count, send_kafka_event, get_user_state, update_user_state],
     )
 
     # Start worker in the background
@@ -286,12 +418,11 @@ async def main():
 
     # Start the parent workflow
     try:
-        result = await client.execute_workflow(
-            CustomerSignUpWorkflow.run,
-            client_id="test-client",
-            first_session_time=datetime.now(),
-            id=workflow_id,
-            task_queue="event-driven-task-queue",
+        await client.start_workflow(
+        MainClickhouseWorkflow.run,
+        id="main-clickhouse-workflow",
+        task_queue=workflow_id,
+        cron_schedule="*/10 * * * *",  # Runs every 10 minutes
         )
         print(f"Workflow completed")
     except Exception as e:
