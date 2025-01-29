@@ -42,7 +42,7 @@ if [[ -z "$TABLE_EXISTS" ]]; then
 CREATE TABLE IF NOT EXISTS $TABLE_NAME (
     client_id VARCHAR(255) PRIMARY KEY,
     triggered_sign_up_workflow BOOLEAN NOT NULL,
-    triggered_login_workflow BOLLEAN NOT NULL,
+    triggered_login_workflow BOOLEAN NOT NULL,
     is_signed_up BOOLEAN NOT NULL,
     is_usage_app BOOLEAN NOT NULL,
     is_app_logged_in BOOLEAN NOT NULL,
