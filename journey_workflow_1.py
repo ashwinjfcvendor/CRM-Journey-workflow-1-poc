@@ -191,95 +191,97 @@ class CustomerSignUpWorkflow:
             schedule_to_close_timeout=timedelta(seconds=10),
         )
 
-        await workflow.execute_activity(
-                    update_user_state,
-                    client_id,
-                    "triggered_sign_up_workflow",
-                    start_to_close_timeout=timedelta(seconds=5),
+        if not user_state["triggered_sign_up_workflow"]:
+
+            await workflow.execute_activity(
+                        update_user_state,
+                        client_id,
+                        "triggered_sign_up_workflow",
+                        start_to_close_timeout=timedelta(seconds=5),
+                    )
+
+            ## Wait for 3 days to check if no sessions have occurred
+            three_days_from_first_session_time = first_session_time + timedelta(days=3)
+            seconds_to_three_days = round((three_days_from_first_session_time - datetime.now()).total_seconds())
+            await asyncio.sleep(seconds_to_three_days)
+
+            user_state = await workflow.execute_activity(
+                get_user_state,
+                client_id,
+                schedule_to_close_timeout=timedelta(seconds=10),
+            )
+            
+            if user_state["is_usage_app"]:
+                ## Query Clickhouse to get session count for user
+                sessions_last_3_days = await workflow.execute_activity(
+                    get_session_count,
+                    client_id=client_id,
+                    start_time=first_session_time,
+                    end_time=three_days_from_first_session_time,
+                    schedule_to_close_timeout=timedelta(seconds=30)
                 )
 
-        ## Wait for 3 days to check if no sessions have occurred
-        three_days_from_first_session_time = first_session_time + timedelta(days=3)
-        seconds_to_three_days = round((three_days_from_first_session_time - datetime.now()).total_seconds())
-        await asyncio.sleep(seconds_to_three_days)
+                ## Get the User Sign Up status from Aerospike (or equivalent)
+                "Insert Activity"
 
-        user_state = await workflow.execute_activity(
-            get_user_state,
-            client_id,
-            schedule_to_close_timeout=timedelta(seconds=10),
-        )
-        
-        if user_state["is_usage_app"]:
-            ## Query Clickhouse to get session count for user
-            sessions_last_3_days = await workflow.execute_activity(
-                get_session_count,
-                client_id=client_id,
-                start_time=first_session_time,
-                end_time=three_days_from_first_session_time,
-                schedule_to_close_timeout=timedelta(seconds=30)
+                if not user_state["is_signed_up"] and sessions_last_3_days == 0:
+                    workflow.logger.info("No sessions in the last 3 days. Sending Push notification event.")
+                    # Send push notification 2 event to Kafka
+                    await workflow.execute_activity(
+                        send_kafka_event,
+                        "send_push_notification_2",
+                        {"client_id": client_id, "event": "sent_pushnotification_2"},
+                        start_to_close_timeout=timedelta(seconds=5),
+                    )
+                    await workflow.execute_activity(
+                        update_user_state,
+                        client_id,
+                        "sent_push_notification_2",
+                        start_to_close_timeout=timedelta(seconds=5),
+                    )
+
+                    ## Update state of the user in Aerospike
+                    "Insert Activity"
+                    user_state["sent_push_notification_2"] == True
+
+            # Wait for 5 days to send push notification 3
+            five_days_from_first_session_time = first_session_time + timedelta(days=5)
+            seconds_to_five_days = round((five_days_from_first_session_time - datetime.now()).total_seconds())
+            await asyncio.sleep(seconds_to_five_days)
+
+            user_state = await workflow.execute_activity(
+                get_user_state,
+                client_id,
+                schedule_to_close_timeout=timedelta(seconds=10),
             )
 
-            ## Get the User Sign Up status from Aerospike (or equivalent)
-            "Insert Activity"
+            if user_state["is_usage_app"] and not user_state["is_app_logged_in"]:
+                # sessions_last_5_days = await workflow.execute_activity(
+                #     get_session_count,
+                #     client_id=client_id,
+                #     start_time=first_session_time,
+                #     end_time=five_days_from_first_session_time,
+                #     schedule_to_close_timeout=timedelta(seconds=30)
+                # )
 
-            if not user_state["is_signed_up"] and sessions_last_3_days == 0:
-                workflow.logger.info("No sessions in the last 3 days. Sending Push notification event.")
-                # Send push notification 2 event to Kafka
-                await workflow.execute_activity(
-                    send_kafka_event,
-                    "send_push_notification_2",
-                    {"client_id": client_id, "event": "sent_pushnotification_2"},
-                    start_to_close_timeout=timedelta(seconds=5),
-                )
-                await workflow.execute_activity(
-                    update_user_state,
-                    client_id,
-                    "sent_push_notification_2",
-                    start_to_close_timeout=timedelta(seconds=5),
-                )
-
-                ## Update state of the user in Aerospike
+                ## Get the User Sign Up status from Aerospike (or equivalent)
                 "Insert Activity"
-                user_state["sent_push_notification_2"] == True
 
-        # Wait for 5 days to send push notification 3
-        five_days_from_first_session_time = first_session_time + timedelta(days=5)
-        seconds_to_five_days = round((five_days_from_first_session_time - datetime.now()).total_seconds())
-        await asyncio.sleep(seconds_to_five_days)
-
-        user_state = await workflow.execute_activity(
-            get_user_state,
-            client_id,
-            schedule_to_close_timeout=timedelta(seconds=10),
-        )
-
-        if user_state["is_usage_app"] and not user_state["is_app_logged_in"]:
-            # sessions_last_5_days = await workflow.execute_activity(
-            #     get_session_count,
-            #     client_id=client_id,
-            #     start_time=first_session_time,
-            #     end_time=five_days_from_first_session_time,
-            #     schedule_to_close_timeout=timedelta(seconds=30)
-            # )
-
-            ## Get the User Sign Up status from Aerospike (or equivalent)
-            "Insert Activity"
-
-            if not user_state["is_signed_up"]:
-                workflow.logger.info("No sign up after 5 days from first session. Sending Push notifiation 3 event.")
-                # Send notification event to Kafka
-                await workflow.execute_activity(
-                    send_kafka_event,
-                    "sent_push_notification_3",
-                    {"client_id": client_id, "event": "sent_push_notification_3"},
-                    start_to_close_timeout=timedelta(seconds=5),
-                )
-                await workflow.execute_activity(
-                    update_user_state,
-                    client_id,
-                    "sent_push_notification_3",
-                    start_to_close_timeout=timedelta(seconds=5),
-                )
+                if not user_state["is_signed_up"]:
+                    workflow.logger.info("No sign up after 5 days from first session. Sending Push notifiation 3 event.")
+                    # Send notification event to Kafka
+                    await workflow.execute_activity(
+                        send_kafka_event,
+                        "sent_push_notification_3",
+                        {"client_id": client_id, "event": "sent_push_notification_3"},
+                        start_to_close_timeout=timedelta(seconds=5),
+                    )
+                    await workflow.execute_activity(
+                        update_user_state,
+                        client_id,
+                        "sent_push_notification_3",
+                        start_to_close_timeout=timedelta(seconds=5),
+                    )
 
 @workflow.defn(name="show_content_card")
 class ShowContentCardWorkflow:
@@ -295,82 +297,84 @@ class CustomerLoginWorkflow:
             schedule_to_close_timeout=timedelta(seconds=10),
         )
 
-        await workflow.execute_activity(
-                    update_user_state,
-                    client_id,
-                    "triggered_login_workflow",
-                    start_to_close_timeout=timedelta(seconds=5),
-                )
-
-        ## wait for 7 days after sighup
-        seven_days_from_signup_time = signedup_time + timedelta(days=3)
-        seconds_to_seven_days = round((seven_days_from_signup_time - datetime.now()).total_seconds())
-        await asyncio.sleep(seconds_to_seven_days)
-
-        user_state = await workflow.execute_activity(
-            get_user_state,
-            client_id,
-            schedule_to_close_timeout=timedelta(seconds=10),
-        )
-
-        if not user_state["is_app_logged_in"]:
-            workflow.logger.info("Customer has not app logged in the last 7 days. Sending email_4a")
-            # send email_4a event to kafka
+        if not user_state["triggered_login_workflow"]:
+            
             await workflow.execute_activity(
-                    send_kafka_event,
-                    "send_email_4a",
-                    {"client_id": client_id, "event": "send_email_4a"},
-                    start_to_close_timeout=timedelta(seconds=5),
-                )
+                        update_user_state,
+                        client_id,
+                        "triggered_login_workflow",
+                        start_to_close_timeout=timedelta(seconds=5),
+                    )
+
+            ## wait for 7 days after sighup
+            seven_days_from_signup_time = signedup_time + timedelta(days=3)
+            seconds_to_seven_days = round((seven_days_from_signup_time - datetime.now()).total_seconds())
+            await asyncio.sleep(seconds_to_seven_days)
+
+            user_state = await workflow.execute_activity(
+                get_user_state,
+                client_id,
+                schedule_to_close_timeout=timedelta(seconds=10),
+            )
+
+            if not user_state["is_app_logged_in"]:
+                workflow.logger.info("Customer has not app logged in the last 7 days. Sending email_4a")
+                # send email_4a event to kafka
                 await workflow.execute_activity(
-                    update_user_state,
-                    client_id,
-                    "sent_email_4a",
-                    start_to_close_timeout=timedelta(seconds=5),
-                )
+                        send_kafka_event,
+                        "send_email_4a",
+                        {"client_id": client_id, "event": "send_email_4a"},
+                        start_to_close_timeout=timedelta(seconds=5),
+                    )
+                    await workflow.execute_activity(
+                        update_user_state,
+                        client_id,
+                        "sent_email_4a",
+                        start_to_close_timeout=timedelta(seconds=5),
+                    )
 
-        ## Wait for 5 days after sending email_4a
-        five_days_after_email_4a_sent = seven_days_from_signup_time + timedelta(days=5)
-        seconds_to_five_days_after_email4a = round((five_days_after_email_4a_sent- datetime.now()).total_seconds())
-        await asyncio.sleep(seconds_to_five_days_after_email4a)
+            ## Wait for 5 days after sending email_4a
+            five_days_after_email_4a_sent = seven_days_from_signup_time + timedelta(days=5)
+            seconds_to_five_days_after_email4a = round((five_days_after_email_4a_sent- datetime.now()).total_seconds())
+            await asyncio.sleep(seconds_to_five_days_after_email4a)
 
-        user_state = await workflow.execute_activity(
-            get_user_state,
-            client_id,
-            schedule_to_close_timeout=timedelta(seconds=10),
-        )
+            user_state = await workflow.execute_activity(
+                get_user_state,
+                client_id,
+                schedule_to_close_timeout=timedelta(seconds=10),
+            )
 
-        if not user_state["is_app_logged_in"] and user_state["sent_email_4a"] and user_state["click_email_4a"]: 
-            workflow.logger.info("Customer has not not app logged in for 5 days after email 4a has been sent but has opened email 4a. Sending email 5 coupon incentive")
-            # send email_5 event to kafka
-            await workflow.execute_activity(
-                    send_kafka_event,
-                    "send_email_5",
-                    {"client_id": client_id, "event": "send_email_5"},
-                    start_to_close_timeout=timedelta(seconds=5),
-                )
-            await workflow.execute_activity(
-                    update_user_state,
-                    client_id,
-                    "sent_email_5",
-                    start_to_close_timeout=timedelta(seconds=5),
-                )
+            if not user_state["is_app_logged_in"] and user_state["sent_email_4a"] and user_state["click_email_4a"]: 
+                workflow.logger.info("Customer has not not app logged in for 5 days after email 4a has been sent but has opened email 4a. Sending email 5 coupon incentive")
+                # send email_5 event to kafka
+                await workflow.execute_activity(
+                        send_kafka_event,
+                        "send_email_5",
+                        {"client_id": client_id, "event": "send_email_5"},
+                        start_to_close_timeout=timedelta(seconds=5),
+                    )
+                await workflow.execute_activity(
+                        update_user_state,
+                        client_id,
+                        "sent_email_5",
+                        start_to_close_timeout=timedelta(seconds=5),
+                    )
 
-        elif not user_state["is_app_logged_in"] and user_state["sent_email_4a"] and not user_state["click_email_4a"]:
-            workflow.logger.info("Customer has not not app logged in for 5 days after email 4a has been sent and also not opened email 4a. Sending email 4b")
-            # send emai_4b to kafka
-            await workflow.execute_activity(
-                    send_kafka_event,
-                    "send_email_4b",
-                    {"client_id": client_id, "event": "send_email_4b"},
-                    start_to_close_timeout=timedelta(seconds=5),
-                )
-            await workflow.execute_activity(
-                    update_user_state,
-                    client_id,
-                    "sent_email_4b",
-                    start_to_close_timeout=timedelta(seconds=5),
-                )
+            elif not user_state["is_app_logged_in"] and user_state["sent_email_4a"] and not user_state["click_email_4a"]:
+                workflow.logger.info("Customer has not not app logged in for 5 days after email 4a has been sent and also not opened email 4a. Sending email 4b")
+                # send emai_4b to kafka
+                await workflow.execute_activity(
+                        send_kafka_event,
+                        "send_email_4b",
+                        {"client_id": client_id, "event": "send_email_4b"},
+                        start_to_close_timeout=timedelta(seconds=5),
+                    )
+                await workflow.execute_activity(
+                        update_user_state,
+                        client_id,
+                        "sent_email_4b",
+                        start_to_close_timeout=timedelta(seconds=5),
+                    )
 
 @workflow.defn(name="main_workflow")
 class MainWorkflow:
