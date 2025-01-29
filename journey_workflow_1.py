@@ -326,12 +326,12 @@ class CustomerLoginWorkflow:
                         {"client_id": client_id, "event": "send_email_4a"},
                         start_to_close_timeout=timedelta(seconds=5),
                     )
-                    await workflow.execute_activity(
-                        update_user_state,
-                        client_id,
-                        "sent_email_4a",
-                        start_to_close_timeout=timedelta(seconds=5),
-                    )
+                await workflow.execute_activity(
+                    update_user_state,
+                    client_id,
+                    "sent_email_4a",
+                    start_to_close_timeout=timedelta(seconds=5),
+                )
 
             ## Wait for 5 days after sending email_4a
             five_days_after_email_4a_sent = seven_days_from_signup_time + timedelta(days=5)
