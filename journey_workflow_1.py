@@ -191,7 +191,7 @@ class CustomerSignUpWorkflow:
             schedule_to_close_timeout=timedelta(seconds=10),
         )
 
-        if not user_state["triggered_sign_up_workflow"]:
+        if not user_state["triggered_sign_up_workflow"] and not user_state["is_signed_up"]:
 
             await workflow.execute_activity(
                         update_user_state,
@@ -297,7 +297,7 @@ class CustomerLoginWorkflow:
             schedule_to_close_timeout=timedelta(seconds=10),
         )
 
-        if not user_state["triggered_login_workflow"]:
+        if not user_state["triggered_login_workflow"] and user_state["is_signed_up"] and not user_state["is_app_logged_in"]:
             
             await workflow.execute_activity(
                         update_user_state,
