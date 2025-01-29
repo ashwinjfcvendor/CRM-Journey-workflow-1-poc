@@ -372,8 +372,8 @@ class CustomerLoginWorkflow:
                     start_to_close_timeout=timedelta(seconds=5),
                 )
 
-@workflow.defn(name="main_clickhouse_workflow")
-class MainClickhouseWorkflow:
+@workflow.defn(name="main_workflow")
+class MainWorkflow:
     @workflow.run
     async def run(self):
         # Query Clickhouse for new client IDs
@@ -415,7 +415,7 @@ async def main():
     worker = Worker(
         client,
         task_queue="event-driven-task-queue",
-        workflows=[MainClickhouseWorkflow, CustomerSignUpWorkflow, CustomerLoginWorkflow],
+        workflows=[MainWorkflow, CustomerSignUpWorkflow, CustomerLoginWorkflow],
         activities=[query_clickhouse, get_session_count, send_kafka_event, get_user_state, update_user_state],
     )
 
@@ -428,7 +428,7 @@ async def main():
     # Start the parent workflow
     try:
         await client.start_workflow(
-        MainClickhouseWorkflow.run,
+        MainWorkflow.run,
         id="main-clickhouse-workflow",
         task_queue=workflow_id,
         cron_schedule="*/10 * * * *",  # Runs every 10 minutes
