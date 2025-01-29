@@ -11,6 +11,9 @@ import clickhouse_connect
 import psycopg2
 from psycopg2.extras import DictCursor
 
+import os
+os.environ["TZ"] = "UTC"
+
 postgres_con = psycopg2.connect(
     database="userstate",
     user="temporal",
