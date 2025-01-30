@@ -19,7 +19,7 @@ DB_EXISTS=$(docker exec "$CONTAINER_NAME" psql -U "$DB_USER" -tAc "SELECT 1 FROM
 # Debug: Output the result of the DB check
 echo "DB_EXISTS: '$DB_EXISTS'"
 
-if [[ "$DB_EXISTS" == "1" ]]; then
+if [ '$DB_EXISTS' = '1' ]; then
     echo "Database '$DB_NAME' already exists. Skipping database creation."
 else
     # Create the userstate database
@@ -34,7 +34,7 @@ TABLE_EXISTS=$(docker exec "$CONTAINER_NAME" psql -U "$DB_USER" -d "$DB_NAME" -t
 # Debug: Output the result of the table check
 echo "TABLE_EXISTS: '$TABLE_EXISTS'"
 
-if [[ -z "$TABLE_EXISTS" ]]; then
+if [ -z $TABLE_EXISTS ]; then
     echo "Table '$TABLE_NAME' does not exist. Creating table."
     
     # Create the user_state table
@@ -54,8 +54,8 @@ CREATE TABLE IF NOT EXISTS $TABLE_NAME (
     sent_email_4b BOOLEAN NOT NULL,
     sent_email_5 BOOLEAN NOT NULL,
     is_logged_in BOOLEAN NOT NULL,
-    signup_time VARCHAR(255),
-    login_time VARCHAR(255)
+    signup_time VARCHAR(255) NULL,
+    login_time VARCHAR(255) NULL
 );
 "
 else

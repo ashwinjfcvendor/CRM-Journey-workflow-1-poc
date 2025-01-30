@@ -6,6 +6,7 @@ CREATE TABLE user_engagement_events_transformed (
     page_title String,
     session_count String,
     session_id String,
+    session_time DateTime,
     page_referrer Nullable(String),
     consumed_at DateTime DEFAULT now()
 ) ENGINE = MergeTree()

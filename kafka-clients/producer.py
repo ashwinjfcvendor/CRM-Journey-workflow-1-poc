@@ -25,6 +25,8 @@ def produce(topic, config):
     for i in range (1,11):
       current_time = int(time.time())
       for session_count in range(1,11):
+        if (i == 4 or i == 8) and client_id in ["1000003", "1000007"]:
+          time.sleep(1)
         event = {
                   "name": "user_engagement",
                   "params": {

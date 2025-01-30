@@ -32,6 +32,7 @@ CREATE TABLE `user_engagement_events_transformed` (
     `page_title` STRING,
     `session_count` STRING,
     `session_id` STRING,
+    `session_time` BIGINT,
     `page_referrer` STRING
 ) WITH (
   'connector' = 'kafka',
@@ -53,5 +54,6 @@ SELECT
   payload.events[1].params.page_title AS page_title,
   payload.events[1].params.session_count AS session_count,
   payload.events[1].params.session_id AS session_id,
+  CAST(payload.events[1].params.session_id AS BIGINT) AS session_time,
   payload.events[1].params.page_referrer AS page_referrer
 FROM `user_engagement_events`;
