@@ -1,0 +1,127 @@
+journey_workflow:
+  send_push_notification_2:
+    - "Not signed up"
+    - "No activity for 3 days after first session"
+    - "Session count in (Now - First session >= 3 days) = 1 then produce to Kafka"
+    - "Can be executed on a daily basis"
+  send_content_card_1a:
+    - "Not signed up"
+    - "More than 1 session within 5 days after first session"
+    - "Session count in (Now - First session <= 5 days) > 1 then produce to Kafka"
+    - "Need to execute periodically to check if there has been more than one session"
+  send_push_notification_3:
+    - "Not signed up"
+    - "Now - First session >= 5 days then produce to Kafka"
+    - "Can be executed on a daily basis"
+  exit_after_one_month:
+    - "Not signed up"
+    - "push notification 3 has been sent"
+    - "Timer for One month after notification 3 has been sent"
+    - "Not applicable in case the user signs up"
+    - "Exit workflow and reentry after 6 months if not signed up"
+  send_email_4a:
+    - "Signed up"
+    - "Not App Logged in"
+    - "Now - First sign up time >= 7 days then produce to Kafka"
+  send_email_4b:
+    - "Signed up"
+    - "Not App Logged in"
+    - "Now - Email 4a time >= 5 days then produce to Kafka"
+    - "Did not open Email 4a"
+  send_email_5:
+    - "Signed up"
+    - "Not App Logged in"
+    - "Now - Email 4a time >= 5 days then produce to Kafka"
+    - "Opened Email 4a"
+  exit_reentry_after_6_months:
+    - "Signed up"
+    - "Not App Logged in"
+    - "Now - Email 4b or 5 time >= x days then exit workflow"
+    - "Reentry after 6 months if not signed up and not app logged in"
+  exit_no_reentry:
+    - "Signed up"
+    - "App logged in"
+    - "Check periodically - Likely daily once"
+
+user_state:
+  - client_id - str 
+  - first_session_time - datetime
+  - is_signed_up - bool
+  - signed_up_time - datetime
+  - is_using_app - bool
+  - is_app_logged_in - bool
+  - first_app_login_time - bool
+  - latest_app_login_time - bool
+  - show_content_card_1a - bool
+  - sent_push_notification_2 - bool
+  - sent_push_notification_3 - bool
+  - sent_email_4a - bool
+  - clicked_email_4a - bool
+  - sent_email_4b - bool
+  - sent_email_5 - bool
+  - triggered_sign_up_workflow
+  - triggered_login_workflow
+
+
+crm_journey_1:
+  main_workflow:
+    input:
+      - Scheduled every 10 mins by the client
+    content:
+      - Fetch all the unique client_ids with their first session time from the last 5 mins. Time can be calculated as trigger time - 5 mins
+      - Filter for all the client_ids which are not present in the user state table
+      - Create entries for the new client ids in the user state table
+      - Trigger the Customer Sign Up workflow for the new client ids by passing in their first session time (Fire and forget)
+      - Set triggered_sign_up_workflow=True for all the triggered client ids
+      - Filter for all the client ids and the sign up time from the user state table for which is_signed_up=True and is_app_logged_in=False and triggered_login_workflow=False
+      - Trigger the Customer Login workflow for the filtered client ids by passing in their sign up time (Fire and forget)
+      - Set triggered_login_workflow=True for all the triggered client ids
+    dependencies:
+      - Following fields will be updated directly into the user state table using a script for this demo
+        - is_signed_up
+        - sign_up_time
+        - is_using_app
+        - is_app_logged_in
+        - click_email_4a
+      - In actuality, these fields will be updated directly from Kafka to Aerospike when the events get processed
+  sign_up_workflow:
+    input:
+      - client_id - Unique identifier for the user
+      - first_session_time - The datetime of the first ever session by the user
+    content:
+      - Get user state from Aerospike (Postgres)
+      - Show content card 1a (Event to Kafka) if user has not signed up. We do this to ensure from second session onwards in both Web and App, the user sees the Content Card
+      - Update the user state in Aerospike (Postgres) for the show content card 1a
+      - Wait for 3 days from first session using timer
+      - Get user state from Aerospike (Postgres)
+      - If the user is using the App and not signed up, then get session count from last 3 days from clickhouse
+      - If the session count in last 3 days is more than 1 (excluding first session), then we send push notification 2 (Event to Kafka)
+      - Update the user state in Aerospike (Postgres) for the send push notification 2
+      - Wait for 5 days from first session using timer
+      - Get user state from Aerospike (Postgres)
+      - If the user is using the App and not signed up, then send the push notification 3 (Event to Kafka)
+      - Update the user state in Aerospike (Postgres) for the send push notification 3
+    dependencies:
+      - data for the user_state should exist in Aerospike (Postgres) 
+      - status of is_signed_up should be managed by the main workflow or other process
+      - status of is_using_app should be managed by the main workflow or other process
+  app_login_workflow:
+    input:
+      - client_id - Unique identifier for the user
+      - signed_up_time - The datetime of the signed up time by the user
+    content:
+      - Wait for 7 days from sign up time using timer
+      - Get user state from Aerospike (Postgres)
+      - If the user has not logged in via app after sign up, then send email 4a
+      - Update the user state in Aerospike (Postgres) for the send email 4a field
+      - Wait for 5 days after sending email_4a using timer
+      - Get user state from Aerospike (Postgres)
+      - If the user has not logged in via app after sign up and has clicked on email 4a, then send email 5
+      - If the user has not logged in via app after sign up and has not clicked on email 4a, then send email 4b
+      - Update the user state in Aerospike (Postgres) for the send email 4b or 5 field
+    dependencies:
+      - data for the user_state should exist in Aerospike (Postgres) 
+      - signed up time should be updated in the user state by the main workflow or other process
+      - status of is_signed_up should be managed by the main workflow or other process
+      - status of is_app_logged_in should be managed by the main workflow or other process
+      - status of click_email_4a should be managed by the main workflow or other process

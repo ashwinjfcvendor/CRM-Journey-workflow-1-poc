@@ -1,5 +1,145 @@
-version: "3.5"
 services:
+  broker:
+    image: confluentinc/cp-kafka:7.5.0
+    hostname: broker
+    container_name: broker
+    networks:
+      - temporal-network
+    ports:
+      - "9092:9092"
+      - "9101:9101"
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: 'CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT'
+      KAFKA_ADVERTISED_LISTENERS: 'PLAINTEXT://broker:29092,PLAINTEXT_HOST://localhost:9092'
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_JMX_PORT: 9101
+      KAFKA_JMX_HOSTNAME: localhost
+      KAFKA_PROCESS_ROLES: 'broker,controller'
+      KAFKA_CONTROLLER_QUORUM_VOTERS: '1@broker:29093'
+      KAFKA_LISTENERS: 'PLAINTEXT://broker:29092,CONTROLLER://broker:29093,PLAINTEXT_HOST://0.0.0.0:9092'
+      KAFKA_INTER_BROKER_LISTENER_NAME: 'PLAINTEXT'
+      KAFKA_CONTROLLER_LISTENER_NAMES: 'CONTROLLER'
+      KAFKA_LOG_DIRS: '/tmp/kraft-combined-logs'
+      # Replace CLUSTER_ID with a unique base64 UUID using "bin/kafka-storage.sh random-uuid"
+      # See https://docs.confluent.io/kafka/operations-tools/kafka-tools.html#kafka-storage-sh
+      CLUSTER_ID: 'MkU3OEVBNTcwNTJENDM2Qk'
+
+  schema-registry:
+    image: confluentinc/cp-schema-registry:7.5.0
+    hostname: schema-registry
+    container_name: schema-registry
+    networks:
+      - temporal-network
+    depends_on:
+      - broker
+    ports:
+      - "8081:8081"
+    environment:
+      SCHEMA_REGISTRY_HOST_NAME: schema-registry
+      SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: 'broker:29092'
+      SCHEMA_REGISTRY_LISTENERS: http://0.0.0.0:8081
+  
+  kafka-connect:
+    build:
+      context: ./clickhouse/kafka-connect
+      dockerfile: Dockerfile
+    image: custom-kafka-connect
+    hostname: kafka-connect
+    container_name: kafka-connect
+    networks:
+      - temporal-network
+    depends_on:
+      - broker
+      - schema-registry
+      - clickhouse
+    environment:
+      CONNECT_BOOTSTRAP_SERVERS: 'broker:29092'
+      CONNECT_REST_PORT: 8083
+      CONNECT_REST_ADVERTISED_HOST_NAME: "kafka-connect"
+      CONNECT_LOG4J_LOGGERS: "org.apache.kafka.connect=DEBUG"
+      CONNECT_LOG4J_ROOT_LOGLEVEL: "INFO"
+      CONNECT_GROUP_ID: "connect-cluster"
+      CONNECT_CONFIG_STORAGE_TOPIC: "connect-configs"
+      CONNECT_OFFSET_STORAGE_TOPIC: "connect-offsets"
+      CONNECT_STATUS_STORAGE_TOPIC: "connect-status"
+      CONNECT_CONFIG_STORAGE_REPLICATION_FACTOR: 1
+      CONNECT_OFFSET_STORAGE_REPLICATION_FACTOR: 1
+      CONNECT_STATUS_STORAGE_REPLICATION_FACTOR: 1
+      # CONNECT_SECURITY_PROTOCOL: "SASL_SSL"
+      # CONNECT_SASL_MECHANISM: "PLAIN"
+      # CONNECT_SASL_JAAS_CONFIG: >
+      #   org.apache.kafka.common.security.plain.PlainLoginModule required
+      #   username="<api-key>"
+      #   password="<api-secret>";
+      CONNECT_KEY_CONVERTER: "org.apache.kafka.connect.json.JsonConverter"
+      CONNECT_VALUE_CONVERTER: "org.apache.kafka.connect.json.JsonConverter"
+      CONNECT_PLUGIN_PATH: "/usr/share/java,/home/appuser/clickhouse-kafka-connect-v1.1.3/lib"
+    ports:
+      - "8083:8083"
+    # volumes:
+    #   - ./connect-plugins:temp/home/appuser/clickhouse-kafka-connect-v1.1.3/lib
+    entrypoint: ["/bin/bash", "-c", "while ! nc -z clickhouse 8123; do sleep 2; done; /etc/confluent/docker/run"]
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:23.8
+    hostname: clickhouse
+    container_name: clickhouse
+    networks:
+      - temporal-network
+    ports:
+      - "8123:8123"
+      - "9000:9000"
+    volumes:
+      - clickhouse_data:/var/lib/clickhouse
+      - ./clickhouse/create-table.sql:/var/lib/create-table.sql
+
+  flink-sql-client:
+    image: cnfldemos/flink-sql-client-kafka:1.19.1-scala_2.12-java17
+    depends_on:
+      - flink-jobmanager
+    hostname: flink-sql-client
+    container_name: flink-sql-client
+    networks:
+      - temporal-network
+    volumes:
+      - ./flink-scripts/commands.sql:/opt/flink/commands.sql
+    environment:
+      FLINK_JOBMANAGER_HOST: flink-jobmanager
+
+  flink-jobmanager:
+    image: cnfldemos/flink-kafka:1.19.1-scala_2.12-java17
+    hostname: flink-jobmanager
+    container_name: flink-jobmanager
+    ports:
+    - 9081:9081
+    command: jobmanager
+    networks:
+      - temporal-network
+    environment:
+    - |
+      FLINK_PROPERTIES=
+      jobmanager.rpc.address: flink-jobmanager
+      rest.bind-port: 9081
+
+  flink-taskmanager:
+    image: cnfldemos/flink-kafka:1.19.1-scala_2.12-java17
+    hostname: flink-taskmanager
+    container_name: flink-taskmanager
+    depends_on:
+    - flink-jobmanager
+    command: taskmanager
+    networks:
+      - temporal-network
+    scale: 1
+    environment:
+    - |
+      FLINK_PROPERTIES=
+      jobmanager.rpc.address: flink-jobmanager
+      taskmanager.numberOfTaskSlots: 10
   elasticsearch:
     container_name: temporal-elasticsearch
     environment:
@@ -25,8 +165,8 @@ services:
     image: postgres:${POSTGRESQL_VERSION}
     networks:
       - temporal-network
-    expose:
-      - 5432
+    ports:
+      - 5432:5432
     volumes:
       - /var/lib/postgresql/data
   temporal:
@@ -75,7 +215,11 @@ services:
       - temporal-network
     ports:
       - 8080:8080
+
 networks:
   temporal-network:
     driver: bridge
     name: temporal-network
+
+volumes:
+  clickhouse_data:

@@ -1,0 +1,23 @@
+{
+    "name": "test-clickhouse-sink-connector",
+    "config": {
+      "connector.class": "com.clickhouse.kafka.connect.ClickHouseSinkConnector",
+      "tasks.max": "1",
+      "topics": "user_engagement_events",
+      "hostname": "clickhouse",
+      "port": "8123",
+      "ssl": "false",
+      "username": "default",
+      "password": "",
+      "database": "default",
+      "key.converter": "org.apache.kafka.connect.storage.StringConverter",
+      "value.converter": "org.apache.kafka.connect.json.JsonConverter",
+      "value.converter.schemas.enable": "false",
+      "errors.retry.timeout": "60",
+      "errors.tolerance": "none",
+      "errors.deadletterqueue.topic.name": "dlq-user_engagement_events",
+      "errors.deadletterqueue.context.headers.enable": "true",
+      "exactlyOnce": "false",
+      "clickhouseSettings": ""
+    }
+  }
